@@ -1,0 +1,14 @@
+# Copy this file to "terraform.tfvars" (without .example) and fill in your own real values.
+# terraform.tfvars is gitignored — it should NEVER be committed.
+
+project_name = "teslo-two-tier"
+
+# If you have an existing EC2 Key Pair and want SSH access, put its name here.
+# If you're using Session Manager only (recommended, no SSH exposure), leave it empty: ""
+key_name = ""
+
+# Database password — pick your own, don't reuse anything from the app's .env.template
+db_password = "ChangeMe_UseAStrongPassword123!"
+
+# Secret used by Teslo Shop to sign JWTs — pick your own random string
+jwt_secret = "ChangeMe_UseARandomStringHere"
