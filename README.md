@@ -1,7 +1,7 @@
 # Two-Tier AWS Infrastructure with Terraform — Teslo Shop
 
-A security-conscious, two-tier architecture on AWS, provisioned entirely with Terraform, hosting a real NestJS + PostgreSQL e-commerce API. Deployed, tested, and torn down for a total AWS cost of **$0.12 USD**
-.
+A security-conscious, two-tier architecture on AWS, provisioned entirely with Terraform, hosting a real NestJS + PostgreSQL e-commerce API. Deployed, tested, and torn down for a total AWS cost of **$0.12 USD**.
+
 ![Architecture Diagram](./screenshots/architecture-diagram.png)
 ![Swagger UI running on the ALB](./screenshots/10-swagger-ui.png)
 
@@ -15,6 +15,7 @@ A security-conscious, two-tier architecture on AWS, provisioned entirely with Te
 - [Design Decisions](#design-decisions)
 - [Infrastructure as Code](#infrastructure-as-code)
 - [CI/CD: Automated Terraform Plan](#cicd-automated-terraform-plan)
+- [Getting Started](#getting-started)
 - [Deployment](#deployment)
 - [Verification](#verification)
 - [Debugging Log](#debugging-log)
@@ -29,7 +30,7 @@ A security-conscious, two-tier architecture on AWS, provisioned entirely with Te
 
 This project provisions a two-tier AWS architecture — a public tier for internet-facing traffic and a private tier for the application and database — to host **Teslo Shop**, a NestJS + TypeORM + PostgreSQL e-commerce API originally built during Fernando Herrera's Udemy Docker course.
 
-**Stack:** Terraform · AWS (VPC, EC2, RDS, ALB, IAM/SSM) · Docker · NestJS · TypeORM · PostgreSQL
+**Stack:** Terraform · AWS (VPC, EC2, RDS, ALB, IAM/SSM) · Docker · NestJS · TypeORM · PostgreSQL · GitHub Actions
 
 This is a simplified version of [project #11](https://github.com/NotHarshhaa/DevOps-Projects) from NotHarshhaa's DevOps-Projects repo, rebuilt from scratch and deployed end-to-end on a real AWS account — see the [Debugging Log](#debugging-log) for the actual issues found and fixed along the way.
 
@@ -84,13 +85,20 @@ Each tier only accepts traffic from the specific SG in front of it (ALB → EC2 
 
 ## Infrastructure as Code
 
+The Terraform code is split by resource domain rather than kept in a single file — easier to navigate as the project grows, and closer to how larger real-world Terraform codebases are organized:
+
 ```
-.
-├── main.tf          # VPC, subnets, SGs, RDS, EC2, ALB, IAM/SSM — 27 resources
-├── variables.tf      # Input variables with sensible defaults
-├── outputs.tf         # ALB DNS name, RDS endpoint, EC2 instance ID, etc.
-├── provider.tf         # AWS provider configuration (us-east-1)
-└── terraform.tfvars.example   # Copy to terraform.tfvars and fill in your own secrets
+terraform/
+├── provider.tf                  # AWS provider configuration (us-east-1, credentials via environment)
+├── variables.tf                  # Input variables with sensible defaults
+├── outputs.tf                     # ALB DNS name, RDS endpoint, EC2 instance ID, etc.
+├── network.tf                      # VPC, subnets, Internet Gateway, NAT Gateway, route tables
+├── security-groups.tf               # 3 layered Security Groups (ALB, Web, DB)
+├── iam.tf                            # IAM role + instance profile for SSM
+├── ec2.tf                             # EC2 instance + user_data (Docker bootstrap)
+├── rds.tf                              # RDS PostgreSQL instance + DB subnet group
+├── alb.tf                               # Load balancer, target group, listener, attachment
+└── terraform.tfvars.example              # Copy to terraform.tfvars and fill in your own secrets
 ```
 
 | Category | Resources |
@@ -100,6 +108,7 @@ Each tier only accepts traffic from the specific SG in front of it (ALB → EC2 
 | Compute | 1 EC2 instance, IAM role + instance profile (SSM) |
 | Database | 1 RDS PostgreSQL instance, DB subnet group |
 | Load Balancing | ALB, target group, listener, target group attachment |
+
 ---
 
 ## CI/CD: Automated Terraform Plan
@@ -108,14 +117,16 @@ As a first step toward full infrastructure automation, this project includes a G
 
 - AWS credentials and sensitive Terraform variables (`db_password`, `jwt_secret`) are stored as **GitHub Secrets** — never committed to the repo, never visible in logs.
 - `terraform plan` is read-only: the pipeline confirms the plan matches the expected infrastructure (27 resources) without provisioning anything or incurring cost.
-- The workflow runs on GitHub-hosted runners, so it needs no local machine or persistent credentials file — `provider.tf` was updated to drop the hardcoded local AWS CLI profile in favor of environment-based credentials, which now works identically both locally and in CI.
+- The workflow runs on GitHub-hosted runners, so it needs no local machine or persistent credentials file. `provider.tf` doesn't hardcode a local AWS CLI profile — it relies on standard AWS credential resolution (environment variables), which works identically whether run locally or from CI.
 
 **Workflow run, triggered automatically by a push:**
 ![GitHub Actions — Terraform Plan succeeded](./screenshots/19-ci-terraform-plan-output.png)
 
 **Plan output, generated entirely by the pipeline:**
 ![CI-generated terraform plan — 27 to add, 0 to change, 0 to destroy](./screenshots/18-ci-workflow-run.png)
+
 ---
+
 ## Getting Started
 
 Want to deploy this yourself? Here's everything you need.
@@ -134,10 +145,20 @@ Want to deploy this yourself? Here's everything you need.
    cd Teslo-two-tier-aws-terraform/terraform
    ```
 
-2. **Configure your AWS credentials** (if you haven't already):
+2. **Configure AWS credentials as environment variables** (the provider reads from the environment, not a hardcoded profile):
    ```bash
-   aws configure --profile terraform
+   # macOS/Linux
+   export AWS_ACCESS_KEY_ID="your-access-key"
+   export AWS_SECRET_ACCESS_KEY="your-secret-key"
+   export AWS_DEFAULT_REGION="us-east-1"
    ```
+   ```powershell
+   # Windows PowerShell
+   $env:AWS_ACCESS_KEY_ID="your-access-key"
+   $env:AWS_SECRET_ACCESS_KEY="your-secret-key"
+   $env:AWS_DEFAULT_REGION="us-east-1"
+   ```
+   Alternatively, if you already have a named profile configured via `aws configure --profile <name>`, export `AWS_PROFILE=<name>` instead of individual keys.
 
 3. **Copy the example variables file and fill in your own values:**
    ```bash
@@ -167,10 +188,10 @@ Want to deploy this yourself? Here's everything you need.
 
 ### Debugging a running deployment
 
-The EC2 instance has no SSH access by design. To inspect logs or troubleshoot, connect via **SSM Session Manager**:
+The EC2 instance has no SSH access by design. To inspect logs or troubleshoot, connect via **SSM Session Manager** (make sure the AWS CLI is authenticated, per step 2 above):
 
 ```bash
-aws ssm start-session --target <ec2_instance_id> --profile terraform
+aws ssm start-session --target <ec2_instance_id>
 ```
 
 Once connected:
@@ -178,6 +199,7 @@ Once connected:
 sudo docker logs teslo-shop-app --tail 50
 ```
 
+---
 
 ## Deployment
 
@@ -299,13 +321,13 @@ This project is a simplified version of [project #11](https://github.com/NotHars
 
 ## Future Improvements
 
-- [ ] Migrate the image from Docker Hub to Amazon ECR
-- [ ] Add a CI/CD pipeline (GitHub Actions) to build and push the Teslo Shop image automatically on every commit
+- [ ] Add a manually-triggered (`workflow_dispatch`) GitHub Actions job for `terraform apply` / `terraform destroy`, to demonstrate a fully CI/CD-managed deployment lifecycle, not just `plan`
+- [ ] Migrate the app image from Docker Hub to Amazon ECR
+- [ ] Add a separate CI/CD pipeline to build and push the Teslo Shop Docker image automatically on every app commit
 - [ ] v2: Auto Scaling Group across multiple instances
 - [ ] v2: CloudFront distribution in front of the ALB
 - [ ] Move secrets (`DB_PASSWORD`, `JWT_SECRET`) out of EC2 `user_data` and into AWS Secrets Manager, fetched by the container at startup instead of injected as plaintext env vars
 - [ ] Add a `wait-for-it` style healthcheck directly in the Dockerfile `HEALTHCHECK` instruction
-- [ ] Add a manually-triggered `terraform apply`/`destroy` workflow to demonstrate full CI/CD-managed deployment
 
 ---
 
@@ -320,4 +342,4 @@ This project is a simplified version of [project #11](https://github.com/NotHars
 
 ## Tech Stack
 
-`Terraform` `AWS` `Docker` `NestJS` `TypeORM` `PostgreSQL` `VPC` `EC2` `RDS` `ALB` `IAM` `SSM`
+`Terraform` `AWS` `Docker` `NestJS` `TypeORM` `PostgreSQL` `VPC` `EC2` `RDS` `ALB` `IAM` `SSM` `GitHub Actions`
