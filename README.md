@@ -14,6 +14,7 @@ A security-conscious, two-tier architecture on AWS, provisioned entirely with Te
 - [Application](#application)
 - [Design Decisions](#design-decisions)
 - [Infrastructure as Code](#infrastructure-as-code)
+- [CI/CD: Automated Terraform Plan](#cicd-automated-terraform-plan)
 - [Deployment](#deployment)
 - [Verification](#verification)
 - [Debugging Log](#debugging-log)
@@ -99,6 +100,23 @@ Each tier only accepts traffic from the specific SG in front of it (ALB → EC2 
 | Compute | 1 EC2 instance, IAM role + instance profile (SSM) |
 | Database | 1 RDS PostgreSQL instance, DB subnet group |
 | Load Balancing | ALB, target group, listener, target group attachment |
+---
+
+## CI/CD: Automated Terraform Plan
+
+As a first step toward full infrastructure automation, this project includes a GitHub Actions workflow (`.github/workflows/terraform.yml`) that automatically runs `terraform fmt`, `validate`, and `plan` on every push to `main`.
+
+- AWS credentials and sensitive Terraform variables (`db_password`, `jwt_secret`) are stored as **GitHub Secrets** — never committed to the repo, never visible in logs.
+- `terraform plan` is read-only: the pipeline confirms the plan matches the expected infrastructure (27 resources) without provisioning anything or incurring cost.
+- The workflow runs on GitHub-hosted runners, so it needs no local machine or persistent credentials file — `provider.tf` was updated to drop the hardcoded local AWS CLI profile in favor of environment-based credentials, which now works identically both locally and in CI.
+
+**Workflow run, triggered automatically by a push:**
+![GitHub Actions — Terraform Plan succeeded](./screenshots/18-ci-workflow-run.png)
+
+**Plan output, generated entirely by the pipeline:**
+![CI-generated terraform plan — 27 to add, 0 to change, 0 to destroy](./screenshots/19-ci-terraform-plan-output.png)
+
+**Next step:** add a manually-triggered (`workflow_dispatch`) `terraform apply` / `terraform destroy` job, so the full infrastructure lifecycle can be demonstrated through the pipeline itself, not just validated.
 
 ---
 ## Getting Started
@@ -290,6 +308,7 @@ This project is a simplified version of [project #11](https://github.com/NotHars
 - [ ] v2: CloudFront distribution in front of the ALB
 - [ ] Move secrets (`DB_PASSWORD`, `JWT_SECRET`) out of EC2 `user_data` and into AWS Secrets Manager, fetched by the container at startup instead of injected as plaintext env vars
 - [ ] Add a `wait-for-it` style healthcheck directly in the Dockerfile `HEALTHCHECK` instruction
+- [ ] Add a manually-triggered `terraform apply`/`destroy` workflow to demonstrate full CI/CD-managed deployment
 
 ---
 
