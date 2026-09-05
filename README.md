@@ -110,11 +110,11 @@ As a first step toward full infrastructure automation, this project includes a G
 - `terraform plan` is read-only: the pipeline confirms the plan matches the expected infrastructure (27 resources) without provisioning anything or incurring cost.
 - The workflow runs on GitHub-hosted runners, so it needs no local machine or persistent credentials file — `provider.tf` was updated to drop the hardcoded local AWS CLI profile in favor of environment-based credentials, which now works identically both locally and in CI.
 
-**Workflow run, triggered automatically by a push:**
-![GitHub Actions — Terraform Plan succeeded](./screenshots/18-ci-workflow-run.png)
-
 **Plan output, generated entirely by the pipeline:**
-![CI-generated terraform plan — 27 to add, 0 to change, 0 to destroy](./screenshots/19-ci-terraform-plan-output.png)
+![CI-generated terraform plan — 27 to add, 0 to change, 0 to destroy](./screenshots/18-ci-workflow-run.png)
+
+**Workflow run, triggered automatically by a push:**
+![GitHub Actions — Terraform Plan succeeded](./screenshots/19-ci-terraform-plan-output.png)
 
 **Next step:** add a manually-triggered (`workflow_dispatch`) `terraform apply` / `terraform destroy` job, so the full infrastructure lifecycle can be demonstrated through the pipeline itself, not just validated.
 
