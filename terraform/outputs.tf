@@ -3,14 +3,14 @@ output "alb_dns_name" {
   value       = aws_lb.main.dns_name
 }
 
-output "ec2_instance_id" {
-  description = "ID de la instancia EC2 (útil para conectarte vía Session Manager)"
-  value       = aws_instance.web.id
+output "asg_name" {
+  description = "Nombre del Auto Scaling Group (util para ver instancias activas en la consola o CLI)"
+  value       = aws_autoscaling_group.web.name
 }
 
-output "ec2_private_ip" {
-  description = "IP privada de la instancia EC2 (no accesible desde internet, solo dentro de la VPC)"
-  value       = aws_instance.web.private_ip
+output "launch_template_id" {
+  description = "ID del Launch Template usado por el ASG"
+  value       = aws_launch_template.web.id
 }
 
 output "rds_endpoint" {
@@ -26,4 +26,9 @@ output "rds_port" {
 output "vpc_id" {
   description = "ID de la VPC creada"
   value       = aws_vpc.main.id
+}
+
+output "cloudfront_domain_name" {
+  description = "Dominio publico de CloudFront (usar este en vez del ALB directo)"
+  value       = aws_cloudfront_distribution.main.domain_name
 }

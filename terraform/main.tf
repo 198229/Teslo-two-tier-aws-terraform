@@ -283,13 +283,13 @@ resource "aws_db_instance" "main" {
   engine_version = "16"
   instance_class = var.db_instance_class
 
-  allocated_storage  = 20
-  storage_encrypted  = true
-  storage_type       = "gp2"
-  db_name            = var.db_name
-  username           = var.db_username
-  password           = var.db_password
-  port               = 5432
+  allocated_storage = 20
+  storage_encrypted = true
+  storage_type      = "gp2"
+  db_name           = var.db_name
+  username          = var.db_username
+  password          = var.db_password
+  port              = 5432
 
   vpc_security_group_ids = [aws_security_group.db.id]
   db_subnet_group_name   = aws_db_subnet_group.main.name
@@ -339,58 +339,9 @@ resource "aws_iam_instance_profile" "ssm" {
 }
 
 # ===========================================
-# 8. INSTANCIA EC2 (En la subred privada) - Teslo Shop
+# 8. INSTANCIA EC2 -> Reemplazada por Auto Scaling Group
+# Ver asg.tf: aws_launch_template.web + aws_autoscaling_group.web
 # ===========================================
-resource "aws_instance" "web" {
-  ami                    = data.aws_ami.amazon_linux.id
-  instance_type          = var.instance_type
-  subnet_id              = aws_subnet.private_1.id
-  vpc_security_group_ids = [aws_security_group.web.id]
-  iam_instance_profile   = aws_iam_instance_profile.ssm.name
-
-  # Se asegura de crear la RDS antes de intentar conectar la app
-  depends_on = [aws_db_instance.main]
-
-  user_data = <<-EOF
-              #!/bin/bash
-              yum update -y
-              yum install -y docker
-              systemctl enable docker
-              systemctl start docker
-              usermod -aG docker ec2-user
-
-              docker pull diegoleon1982/teslo-shop:latest
-
-              # Espera activa a que RDS acepte conexiones antes de levantar la app
-              echo "Esperando a que RDS esté disponible en ${aws_db_instance.main.address}:5432..."
-              for i in $(seq 1 30); do
-                if timeout 3 bash -c "cat < /dev/null > /dev/tcp/${aws_db_instance.main.address}/5432" 2>/dev/null; then
-                  echo "RDS disponible."
-                  break
-                fi
-                echo "Intento $i: RDS todavía no responde, esperando 10s..."
-                sleep 10
-              done
-
-              docker run -d \
-                --name teslo-shop-app \
-                --restart unless-stopped \
-                -p 80:3000 \
-                -e STAGE="prod" \
-                -e PORT="3000" \
-                -e DB_HOST="${aws_db_instance.main.address}" \
-                -e DB_PORT="${aws_db_instance.main.port}" \
-                -e DB_NAME="${var.db_name}" \
-                -e DB_USERNAME="${var.db_username}" \
-                -e DB_PASSWORD="${var.db_password}" \
-                -e JWT_SECRET="${var.jwt_secret}" \
-                diegoleon1982/teslo-shop:latest
-              EOF
-
-  tags = {
-    Name = "${var.project_name}-ec2-web"
-  }
-}
 
 # ===========================================
 # 9. APPLICATION LOAD BALANCER (ALB) en subred pública
@@ -444,9 +395,5 @@ resource "aws_lb_listener" "main" {
   }
 }
 
-# Asociar la EC2 al Target Group
-resource "aws_lb_target_group_attachment" "main" {
-  target_group_arn = aws_lb_target_group.main.arn
-  target_id        = aws_instance.web.id
-  port              = 80
-}
+# Nota: la asociacion EC2 -> Target Group ahora la maneja el
+# Auto Scaling Group automaticamente (ver asg.tf), no un attachment manual.
