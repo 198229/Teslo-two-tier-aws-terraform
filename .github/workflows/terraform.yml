@@ -10,11 +10,23 @@ on:
     branches: [main]
     paths:
       - "terraform/**"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Accion a ejecutar (requiere confirmacion manual, nunca se dispara solo)"
+        required: true
+        type: choice
+        options:
+          - apply
+          - destroy
 
 jobs:
   plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
+    # Este job sigue corriendo automatico en push/PR, igual que antes.
+    # NO corre en workflow_dispatch (ver 'if' abajo) para no duplicar el plan.
+    if: github.event_name != 'workflow_dispatch'
     defaults:
       run:
         working-directory: terraform
@@ -47,3 +59,44 @@ jobs:
 
       - name: Terraform Plan
         run: terraform plan -no-color -input=false
+
+  apply_or_destroy:
+    name: Terraform Apply/Destroy (manual)
+    runs-on: ubuntu-latest
+    # SOLO corre si alguien lo dispara a mano desde la pestaña "Actions" de GitHub.
+    # Nunca se ejecuta por un push o un pull request.
+    if: github.event_name == 'workflow_dispatch'
+    # 'environment' pide aprobacion manual configurada en GitHub
+    # (Settings -> Environments -> production -> Required reviewers)
+    # antes de que el job realmente corra. Punto de control humano extra.
+    environment: production
+    defaults:
+      run:
+        working-directory: terraform
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-east-1
+      TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
+      TF_VAR_jwt_secret: ${{ secrets.TF_VAR_JWT_SECRET }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Apply
+        if: github.event.inputs.action == 'apply'
+        run: terraform apply -auto-approve -input=false
+
+      - name: Terraform Destroy
+        if: github.event.inputs.action == 'destroy'
+        run: terraform destroy -auto-approve -input=false
