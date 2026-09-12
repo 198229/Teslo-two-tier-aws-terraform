@@ -1,0 +1,6 @@
+# Fuerza a Git a tratar estos tipos de archivo como binarios,
+# evitando que intente convertir saltos de linea (LF/CRLF) y los corrompa.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
