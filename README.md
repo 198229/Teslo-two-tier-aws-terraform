@@ -51,7 +51,7 @@ This is a simplified version of [project #11](https://github.com/NotHarshhaa/Dev
 - A **target-tracking scaling policy** on average CPU (target 50%) — scales out under load, scales back in once load drops
 - 1 RDS PostgreSQL 16 (`db.t3.micro`), encrypted at rest, **not publicly accessible**, private subnet
 - 1 Application Load Balancer, public subnet
-- **30 AWS resources total** (27 from v1 + CloudFront + Launch Template + Auto Scaling Group + scaling policy, net of removing the single EC2 instance and its target group attachment)
+- **29 AWS resources total** (27 from v1, minus the single EC2 instance and its target group attachment, plus CloudFront, the Launch Template, the Auto Scaling Group, and the scaling policy) — matches the 29 resources actually destroyed at teardown, see [Cost](#cost)
 
 ![VPC resource map](./screenshots/01-vpc-resource-map.png)
 
@@ -374,7 +374,7 @@ Destroy complete! Resources: 0 destroyed.
 ```
 ![The misleading "0 destroyed" — real infrastructure was still running](./screenshots/29-debug-local-state-zero-destroyed.png)
 
-Except the real infrastructure — VPC, ASG, RDS, CloudFront, all 30 resources — was still live in AWS. The project has no remote backend configured (`provider.tf` uses local state), so every environment that runs Terraform has its own isolated `terraform.tfstate`. My local machine's state file knew about the 30 resources it had created; the GitHub Actions runner, checking out a fresh copy of the repo with no state file of its own, had nothing to destroy and correctly (from *its* point of view) reported zero changes. **Fixed by running `terraform destroy` from the same local machine that held the real state** — confirmed 29 resources destroyed, then independently re-verified with `aws rds describe-db-instances`, `aws ec2 describe-instances`, `aws elbv2 describe-load-balancers`, `aws cloudfront list-distributions`, and `aws autoscaling describe-auto-scaling-groups`, all returning empty.
+Except the real infrastructure — VPC, ASG, RDS, CloudFront, all 29 resources — was still live in AWS. The project has no remote backend configured (`provider.tf` uses local state), so every environment that runs Terraform has its own isolated `terraform.tfstate`. My local machine's state file knew about the 29 resources it had created; the GitHub Actions runner, checking out a fresh copy of the repo with no state file of its own, had nothing to destroy and correctly (from *its* point of view) reported zero changes. **Fixed by running `terraform destroy` from the same local machine that held the real state** — confirmed 29 resources destroyed, then independently re-verified with `aws rds describe-db-instances`, `aws ec2 describe-instances`, `aws elbv2 describe-load-balancers`, `aws cloudfront list-distributions`, and `aws autoscaling describe-auto-scaling-groups`, all returning empty.
 
 This is the practical, first-hand reason a **remote backend (S3 + DynamoDB lock)** is table stakes for using `workflow_dispatch` safely in any team setting — see [Future Improvements](#future-improvements).
 
@@ -402,7 +402,14 @@ This project is designed to run for a few hours at a time and then be destroyed 
 terraform destroy
 ```
 
+**v1 destroy** (27 resources — before CloudFront/ASG existed):
 ![Destroy complete — all 27 resources removed (v1 baseline)](./screenshots/16-terraform-destroy-complete.png)
+
+**v2 destroy** (29 resources, matching the 29 created):
+```
+Destroy complete! Resources: 29 destroyed.
+```
+Independently re-verified empty with `aws rds describe-db-instances`, `aws ec2 describe-instances`, `aws elbv2 describe-load-balancers`, `aws cloudfront list-distributions`, and `aws autoscaling describe-auto-scaling-groups` — see [Debugging Log #6](#6-workflow_dispatch-destroy-reported-success-but-destroyed-nothing) for why that independent check mattered.
 
 ---
 
