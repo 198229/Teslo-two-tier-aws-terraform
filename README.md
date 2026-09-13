@@ -423,9 +423,9 @@ This project is a simplified version of [project #11](https://github.com/NotHars
 
 ## Future Improvements
 
-- [x] ~~Add a manually-triggered (`workflow_dispatch`) GitHub Actions job for `terraform apply` / `terraform destroy`~~ — done, see [CI/CD](#cicd)
-- [x] ~~v2: Auto Scaling Group across multiple instances~~ — done, see [Auto Scaling — Verified Behaviors](#auto-scaling--verified-behaviors)
-- [x] ~~v2: CloudFront distribution in front of the ALB~~ — done, see [CloudFront](#cloudfront)
+- [x] Manually-triggered (`workflow_dispatch`) GitHub Actions job for `terraform apply` / `terraform destroy` — done, see [CI/CD](#cicd)
+- [x] v2: Auto Scaling Group across multiple instances — done, see [Auto Scaling — Verified Behaviors](#auto-scaling--verified-behaviors)
+- [x] v2: CloudFront distribution in front of the ALB — done, see [CloudFront](#cloudfront)
 - [ ] **Migrate Terraform state to a remote backend (S3 + DynamoDB lock)** — not optional if `workflow_dispatch` is going to be used safely; see [Debugging Log #6](#6-workflow_dispatch-destroy-reported-success-but-destroyed-nothing) for the real failure this caused
 - [ ] HTTPS end-to-end: ACM certificate + custom domain via Route 53, HTTPS listener on the ALB, CloudFront origin over HTTPS instead of HTTP
 - [ ] AWS WAF, attached to CloudFront or the ALB
