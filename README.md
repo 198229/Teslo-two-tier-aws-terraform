@@ -73,7 +73,7 @@ Everything here was deployed end-to-end on a real AWS account — see the [Debug
 **Teslo Shop** is a REST API e-commerce backend (NestJS + TypeORM) built during Fernando Herrera's Udemy course. Chosen over the course's other Docker exercise (`docker-graphql`) specifically because it uses a real relational database — giving the RDS instance in this architecture an actual purpose to validate, rather than sitting idle.
 
 - Docker image: [`diegoleon1982/teslo-shop:latest`](https://hub.docker.com/r/diegoleon1982/teslo-shop)
-- Environment variables injected dynamically by Terraform via the Launch Template's `user_data`: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `JWT_SECRET`, `STAGE`, `PORT`
+- Environment variables injected dynamically by Terraform via the Launch Template's `user_data`: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `STAGE`, `PORT`. `DB_PASSWORD` and `JWT_SECRET` are not in the template since v3: the instance reads them from SSM Parameter Store at boot (see [v3](#v3-remote-state-and-secrets))
 - Container maps host port `80` to container port `3000` (`docker run -p 80:3000`) — the Target Group and CloudFront both talk to port 80; the app itself only knows about port 3000
 - API prefix: `/api` (Swagger docs served at `/api`)
 - SSL to RDS is enabled automatically in the app when `STAGE=prod`
@@ -454,7 +454,7 @@ Destroy complete! Resources: 0 destroyed.
 ```
 ![The misleading "0 destroyed" — real infrastructure was still running](./screenshots/29-debug-local-state-zero-destroyed.png)
 
-Except the real infrastructure — VPC, ASG, RDS, CloudFront, all 29 resources — was still live in AWS. The project has no remote backend configured (`provider.tf` uses local state), so every environment that runs Terraform has its own isolated `terraform.tfstate`. My local machine's state file knew about the 29 resources it had created; the GitHub Actions runner, checking out a fresh copy of the repo with no state file of its own, had nothing to destroy and correctly (from *its* point of view) reported zero changes. **Fixed by running `terraform destroy` from the same local machine that held the real state** — confirmed 29 resources destroyed, then independently re-verified with `aws rds describe-db-instances`, `aws ec2 describe-instances`, `aws elbv2 describe-load-balancers`, `aws cloudfront list-distributions`, and `aws autoscaling describe-auto-scaling-groups`, all returning empty.
+Except the real infrastructure — VPC, ASG, RDS, CloudFront, all 29 resources — was still live in AWS. At that point (v2) the project had no remote backend configured (`provider.tf` used local state), so every environment that runs Terraform has its own isolated `terraform.tfstate`. My local machine's state file knew about the 29 resources it had created; the GitHub Actions runner, checking out a fresh copy of the repo with no state file of its own, had nothing to destroy and correctly (from *its* point of view) reported zero changes. **Fixed by running `terraform destroy` from the same local machine that held the real state** — confirmed 29 resources destroyed, then independently re-verified with `aws rds describe-db-instances`, `aws ec2 describe-instances`, `aws elbv2 describe-load-balancers`, `aws cloudfront list-distributions`, and `aws autoscaling describe-auto-scaling-groups`, all returning empty.
 
 This is the practical, first-hand reason a **remote backend (S3 + DynamoDB lock)** is table stakes for using `workflow_dispatch` safely in any team setting — **resolved in v3**, see [v3: Remote State and Secrets](#v3-remote-state-and-secrets).
 
@@ -520,11 +520,11 @@ Deliberate scope decisions rather than oversights; each one is tracked in [Futur
 - [x] v2: Auto Scaling Group across multiple instances — done, see [Auto Scaling — Verified Behaviors](#auto-scaling--verified-behaviors)
 - [x] v2: CloudFront distribution in front of the ALB — done, see [CloudFront](#cloudfront)
 - [x] v3: Migrate Terraform state to a remote backend (S3 + DynamoDB lock) — done, see [v3: Remote State and Secrets](#v3-remote-state-and-secrets)
+- [x] v3: Move secrets (`DB_PASSWORD`, `JWT_SECRET`) out of EC2 `user_data` into SSM Parameter Store — done, see [v3: Remote State and Secrets](#v3-remote-state-and-secrets)
 - [ ] HTTPS end-to-end: ACM certificate + custom domain via Route 53, HTTPS listener on the ALB, CloudFront origin over HTTPS instead of HTTP
 - [ ] AWS WAF, attached to CloudFront or the ALB
 - [ ] Migrate the app image from Docker Hub to Amazon ECR
 - [ ] Add a separate CI/CD pipeline to build and push the Teslo Shop Docker image automatically on every app commit
-- [x] v3: Move secrets (`DB_PASSWORD`, `JWT_SECRET`) out of EC2 `user_data` into SSM Parameter Store — done, see [v3: Remote State and Secrets](#v3-remote-state-and-secrets)
 - [ ] Stop passing secrets to the container as environment variables: have the app read them from SSM / Secrets Manager at startup, and use a customer-managed KMS key
 - [ ] Replace the `dynamodb_table` backend setting with S3-native locking (`use_lockfile`) — `dynamodb_table` is deprecated in current Terraform
 - [ ] Add a `wait-for-it` style healthcheck directly in the Dockerfile `HEALTHCHECK` instruction
