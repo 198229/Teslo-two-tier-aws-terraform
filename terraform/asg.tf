@@ -37,6 +37,10 @@ resource "aws_launch_template" "web" {
                 sleep 10
               done
 
+              # Lee los secretos desde SSM Parameter Store (ya no van en texto plano)
+              DB_PASSWORD=$(aws ssm get-parameter --name "${aws_ssm_parameter.db_password.name}" --with-decryption --query Parameter.Value --output text --region us-east-1)
+              JWT_SECRET=$(aws ssm get-parameter --name "${aws_ssm_parameter.jwt_secret.name}" --with-decryption --query Parameter.Value --output text --region us-east-1)
+
               docker run -d \
                 --name teslo-shop-app \
                 --restart unless-stopped \
@@ -47,8 +51,8 @@ resource "aws_launch_template" "web" {
                 -e DB_PORT="${aws_db_instance.main.port}" \
                 -e DB_NAME="${var.db_name}" \
                 -e DB_USERNAME="${var.db_username}" \
-                -e DB_PASSWORD="${var.db_password}" \
-                -e JWT_SECRET="${var.jwt_secret}" \
+                -e DB_PASSWORD="$DB_PASSWORD" \
+                -e JWT_SECRET="$JWT_SECRET" \
                 diegoleon1982/teslo-shop:latest
               EOF
   )
@@ -87,7 +91,7 @@ resource "aws_autoscaling_group" "web" {
   }
 
   # Se asegura de crear la RDS antes de que el ASG intente lanzar instancias
-  depends_on = [aws_db_instance.main]
+  depends_on = [aws_db_instance.main, aws_iam_role_policy.read_secrets]
 
   tag {
     key                 = "Name"
