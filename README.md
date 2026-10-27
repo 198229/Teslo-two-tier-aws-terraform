@@ -23,7 +23,7 @@ A security-conscious, two-tier architecture on AWS, provisioned entirely with Te
 - [v3: Remote State and Secrets](#v3-remote-state-and-secrets)
 - [Debugging Log](#debugging-log)
 - [Cost](#cost)
-- [Simplifications vs. Full Reference Architecture](#simplifications-vs-full-reference-architecture)
+- [Known Limitations](#known-limitations)
 - [Future Improvements](#future-improvements)
 - [Lessons Learned](#lessons-learned)
 
@@ -39,7 +39,7 @@ This project provisions a two-tier AWS architecture — a public tier for intern
 
 **Stack:** Terraform · AWS (VPC, EC2, Auto Scaling, RDS, ALB, CloudFront, IAM/SSM, CloudWatch) · Docker · NestJS · TypeORM · PostgreSQL · GitHub Actions
 
-This is a simplified version of [project #11](https://github.com/NotHarshhaa/DevOps-Projects) from NotHarshhaa's DevOps-Projects repo, rebuilt from scratch and deployed end-to-end on a real AWS account — see the [Debugging Log](#debugging-log) for the actual issues found and fixed along the way, in both v1 and v2.
+Everything here was deployed end-to-end on a real AWS account — see the [Debugging Log](#debugging-log) for the actual issues found and fixed along the way, across v1, v2, and v3.
 
 ---
 
@@ -142,9 +142,7 @@ The GitHub Actions workflow (`.github/workflows/terraform.yml`) has two jobs:
 
 - AWS credentials and sensitive Terraform variables (`db_password`, `jwt_secret`) are stored as **GitHub Secrets** — never committed to the repo, never visible in logs.
 - The workflow runs on GitHub-hosted runners, so it needs no local machine or persistent credentials file.
-- **(v3)** State now lives in S3, so the pipeline and a local machine see the same infrastructure — the root cause of [Debugging Log #6](#6-workflow_dispatch-destroy-reported-success-but-destroyed-nothing). The workflow pins Terraform `1.15.9`, because an older Terraform cannot read state written by a newer one. The `plan` job ran against the remote backend on the v3 pull request and passed:
-
-![v3 pull request — CI plan passed against the remote backend](./screenshots/40-ci-plan-remote-backend.png)
+- **(v3)** State now lives in S3, so the pipeline and a local machine see the same infrastructure — the root cause of [Debugging Log #6](#6-workflow_dispatch-destroy-reported-success-but-destroyed-nothing). The workflow pins Terraform `1.15.9`, because an older Terraform cannot read state written by a newer one. The `plan` job ran against the remote backend on the v3 pull request and passed.
 
 **Workflow run, manually triggered via `workflow_dispatch`:**
 ![GitHub Actions — Terraform Apply/Destroy job succeeded](./screenshots/26-workflow-dispatch-success.png)
@@ -501,18 +499,18 @@ Independently re-verified: `aws ec2 describe-nat-gateways`, `aws rds describe-db
 
 ---
 
-## Simplifications vs. Full Reference Architecture
+## Known Limitations
 
-This project is a simplified version of [project #11](https://github.com/NotHarshhaa/DevOps-Projects) from NotHarshhaa's DevOps-Projects repo. v2 closes two of the original gaps; the rest remain deliberate scope decisions:
+Deliberate scope decisions rather than oversights; each one is tracked in [Future Improvements](#future-improvements).
 
-| Full reference architecture | This project (v2) |
+| Area | Current state |
 |---|---|
-| ~~Auto Scaling Group~~ | ✅ Implemented — see [Auto Scaling — Verified Behaviors](#auto-scaling--verified-behaviors) |
-| ~~CloudFront~~ | ✅ Implemented — see [CloudFront](#cloudfront) |
-| HTTPS end-to-end (ACM + custom domain) | CloudFront default cert only; ALB stays HTTP |
-| Multi-AZ RDS | Single-AZ RDS |
-| WAF | None |
-| Likely ECR | Docker Hub |
+| HTTPS | CloudFront default certificate only; the CloudFront-to-ALB hop and the ALB listener stay HTTP |
+| Database | Single-AZ RDS |
+| Edge protection | No WAF |
+| Image registry | Docker Hub instead of ECR |
+| Secrets | Read from SSM Parameter Store at boot, but still plaintext environment variables inside the container and present in the Terraform state — see [v3](#v3-remote-state-and-secrets) |
+| State locking | DynamoDB table; the `dynamodb_table` setting is deprecated in current Terraform, S3-native locking is the planned replacement |
 
 ---
 
