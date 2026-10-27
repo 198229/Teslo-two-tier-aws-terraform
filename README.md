@@ -1,6 +1,6 @@
 # Two-Tier AWS Infrastructure with Terraform — Teslo Shop
 
-A security-conscious, two-tier architecture on AWS, provisioned entirely with Terraform, hosting a real NestJS + PostgreSQL e-commerce API. **v2** adds a CloudFront CDN in front of the ALB and replaces the single EC2 instance with an Auto Scaling Group — verified live with real CPU load, not just deployed and left alone.
+A security-conscious, two-tier architecture on AWS, provisioned entirely with Terraform, hosting a real NestJS + PostgreSQL e-commerce API. **v2** adds a CloudFront CDN in front of the ALB and replaces the single EC2 instance with an Auto Scaling Group — verified live with real CPU load, not just deployed and left alone. **v3** moves Terraform state to a remote S3 backend with locking, and takes the database password and JWT secret out of the EC2 launch template by serving them from SSM Parameter Store.
 
 ![Architecture Diagram](./screenshots/architecture-diagram.png)
 ![Swagger UI served through CloudFront over HTTPS](./screenshots/20-cloudfront-https-swagger.png)
@@ -20,6 +20,7 @@ A security-conscious, two-tier architecture on AWS, provisioned entirely with Te
 - [Verification](#verification)
 - [CloudFront](#cloudfront)
 - [Auto Scaling — Verified Behaviors](#auto-scaling--verified-behaviors)
+- [v3: Remote State and Secrets](#v3-remote-state-and-secrets)
 - [Debugging Log](#debugging-log)
 - [Cost](#cost)
 - [Simplifications vs. Full Reference Architecture](#simplifications-vs-full-reference-architecture)
@@ -33,6 +34,8 @@ A security-conscious, two-tier architecture on AWS, provisioned entirely with Te
 This project provisions a two-tier AWS architecture — a public tier for internet-facing traffic and a private tier for the application and database — to host **Teslo Shop**, a NestJS + TypeORM + PostgreSQL e-commerce API originally built during Fernando Herrera's Udemy Docker course.
 
 **v2** evolves the compute tier from a single fixed EC2 instance into an **Auto Scaling Group** behind the existing ALB, and adds a **CloudFront** distribution in front of it for HTTPS at the edge. Both were deployed, load-tested, and torn down against a real AWS account — see [Auto Scaling — Verified Behaviors](#auto-scaling--verified-behaviors) for the evidence.
+
+**v3** is a focused hardening pass rather than new features: Terraform state moves to **S3 with DynamoDB locking** (the fix for [Debugging Log #6](#6-workflow_dispatch-destroy-reported-success-but-destroyed-nothing)), and `DB_PASSWORD` / `JWT_SECRET` move from plaintext `user_data` to **SSM Parameter Store** (SecureString), read by the instance at boot through a least-privilege IAM policy. See [v3: Remote State and Secrets](#v3-remote-state-and-secrets), including what it does *not* fix.
 
 **Stack:** Terraform · AWS (VPC, EC2, Auto Scaling, RDS, ALB, CloudFront, IAM/SSM, CloudWatch) · Docker · NestJS · TypeORM · PostgreSQL · GitHub Actions
 
@@ -51,7 +54,7 @@ This is a simplified version of [project #11](https://github.com/NotHarshhaa/Dev
 - A **target-tracking scaling policy** on average CPU (target 50%) — scales out under load, scales back in once load drops
 - 1 RDS PostgreSQL 16 (`db.t3.micro`), encrypted at rest, **not publicly accessible**, private subnet
 - 1 Application Load Balancer, public subnet
-- **29 AWS resources total** (27 from v1, minus the single EC2 instance and its target group attachment, plus CloudFront, the Launch Template, the Auto Scaling Group, and the scaling policy) — matches the 29 resources actually destroyed at teardown, see [Cost](#cost)
+- **29 AWS resources total** (27 from v1, minus the single EC2 instance and its target group attachment, plus CloudFront, the Launch Template, the Auto Scaling Group, and the scaling policy) — matches the 29 resources actually destroyed at teardown, see [Cost](#cost). v3 adds 2 SSM parameters and 1 IAM policy, for **32 resources** in the main stack, plus 5 in the separate `bootstrap/` stack that holds the remote state backend
 
 ![VPC resource map](./screenshots/01-vpc-resource-map.png)
 
@@ -98,22 +101,22 @@ The ALB listener in this project only has an HTTP (port 80) listener — provisi
 
 ## Infrastructure as Code
 
-The Terraform code is split by resource domain rather than kept in a single file — easier to navigate as the project grows, and closer to how larger real-world Terraform codebases are organized:
+The Terraform code is organized into a few files: networking, security groups, IAM, RDS, and the ALB share `main.tf`, while the pieces added in later versions each have their own file. A separate `bootstrap/` folder creates the remote state backend itself (see [v3](#v3-remote-state-and-secrets)).
 
 ```
+bootstrap/
+└── main.tf                    # (v3) S3 bucket + DynamoDB lock table for remote state — applied once, with local state
+
 terraform/
-├── provider.tf                  # AWS provider configuration (us-east-1, credentials via environment)
-├── variables.tf                  # Input variables with sensible defaults
-├── outputs.tf                     # ALB DNS name, CloudFront domain, ASG name, RDS endpoint, etc.
-├── network.tf                      # VPC, subnets, Internet Gateway, NAT Gateway, route tables
-├── security-groups.tf               # 3 layered Security Groups (ALB, Web, DB)
-├── iam.tf                            # IAM role + instance profile for SSM
-├── ec2.tf                             # (v1) EC2 instance + user_data — replaced by asg.tf in v2
-├── asg.tf                             # Launch Template + Auto Scaling Group + target-tracking scaling policy
-├── cloudfront.tf                       # CloudFront distribution in front of the ALB
-├── rds.tf                              # RDS PostgreSQL instance + DB subnet group
-├── alb.tf                               # Load balancer, target group, listener
-└── terraform.tfvars.example              # Copy to terraform.tfvars and fill in your own secrets
+├── provider.tf                # AWS provider configuration (us-east-1, credentials via environment)
+├── backend.tf                 # (v3) Remote state: S3 bucket + DynamoDB lock
+├── variables.tf               # Input variables with sensible defaults
+├── outputs.tf                 # ALB DNS name, CloudFront domain, ASG name, RDS endpoint, etc.
+├── main.tf                    # VPC, subnets, IGW, NAT, route tables, 3 Security Groups, IAM role + instance profile, RDS, ALB
+├── asg.tf                     # Launch Template + Auto Scaling Group + target-tracking scaling policy
+├── cloudfront.tf              # CloudFront distribution in front of the ALB
+├── secrets.tf                 # (v3) SSM SecureString parameters + least-privilege IAM policy to read them
+└── terraform.tfvars.example   # Copy to terraform.tfvars and fill in your own secrets
 ```
 
 | Category | Resources |
@@ -124,6 +127,8 @@ terraform/
 | Database | 1 RDS PostgreSQL instance, DB subnet group |
 | Load Balancing | ALB, target group, listener |
 | Edge / CDN | 1 CloudFront distribution |
+| Secrets *(v3)* | 2 SSM Parameter Store SecureString parameters, 1 IAM policy (`ssm:GetParameter` on those two ARNs only) |
+| State backend *(v3, `bootstrap/`)* | S3 bucket (versioned, encrypted, public access blocked) + DynamoDB lock table |
 
 ---
 
@@ -137,6 +142,9 @@ The GitHub Actions workflow (`.github/workflows/terraform.yml`) has two jobs:
 
 - AWS credentials and sensitive Terraform variables (`db_password`, `jwt_secret`) are stored as **GitHub Secrets** — never committed to the repo, never visible in logs.
 - The workflow runs on GitHub-hosted runners, so it needs no local machine or persistent credentials file.
+- **(v3)** State now lives in S3, so the pipeline and a local machine see the same infrastructure — the root cause of [Debugging Log #6](#6-workflow_dispatch-destroy-reported-success-but-destroyed-nothing). The workflow pins Terraform `1.15.9`, because an older Terraform cannot read state written by a newer one. The `plan` job ran against the remote backend on the v3 pull request and passed:
+
+![v3 pull request — CI plan passed against the remote backend](./screenshots/40-ci-plan-remote-backend.png)
 
 **Workflow run, manually triggered via `workflow_dispatch`:**
 ![GitHub Actions — Terraform Apply/Destroy job succeeded](./screenshots/26-workflow-dispatch-success.png)
@@ -156,7 +164,7 @@ Want to deploy this yourself? Here's everything you need.
 
 - An AWS account with billing enabled
 - [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.5
-- [AWS CLI](https://aws.amazon.com/cli/) installed and configured with credentials that have permissions to create VPCs, EC2, Auto Scaling, RDS, ALB, CloudFront, and IAM resources (an IAM user with `AdministratorAccess` is the simplest option for testing)
+- [AWS CLI](https://aws.amazon.com/cli/) installed and configured with credentials that have permissions to create VPCs, EC2, Auto Scaling, RDS, ALB, CloudFront, IAM, S3, DynamoDB, and SSM Parameter Store resources (an IAM user with `AdministratorAccess` is the simplest option for testing)
 
 ### Setup
 
@@ -187,8 +195,17 @@ Want to deploy this yourself? Here's everything you need.
    ```
    Edit `terraform.tfvars` and set your own `db_password` and `jwt_secret` — never reuse the example values.
 
-4. **Initialize and deploy:**
+4. **Create the remote state backend (once per AWS account):**
    ```bash
+   cd ../bootstrap
+   terraform init
+   terraform apply
+   ```
+   It prints a `bucket_name` (`teslo-two-tier-tfstate-<your-account-id>`). Put that name in `terraform/backend.tf`, replacing the placeholder, then go back to the `terraform/` folder. Don't destroy this stack: it holds the state of everything else.
+
+5. **Initialize and deploy:**
+   ```bash
+   cd ../terraform
    terraform init
    terraform validate
    terraform plan
@@ -196,17 +213,17 @@ Want to deploy this yourself? Here's everything you need.
    ```
    Confirm with `yes` when prompted. RDS typically takes 5–10 minutes to provision, and CloudFront can take 10–15 minutes to fully deploy — both are expected.
 
-5. **Grab the outputs** once `apply` finishes:
+6. **Grab the outputs** once `apply` finishes:
    ```bash
    terraform output
    ```
    Open `https://<cloudfront_domain_name>/api` in your browser to see the Swagger UI over HTTPS.
 
-6. **When you're done, tear it down** to avoid ongoing charges:
+7. **When you're done, tear it down** to avoid ongoing charges:
    ```bash
    terraform destroy
    ```
-   Run this from the same machine/state where you ran `apply` — see [Debugging Log #6](#6-workflow_dispatch-destroy-reported-success-but-destroyed-nothing) for why this matters.
+   Since v3 the state is remote, so this works from any machine with access to the bucket — before v3 it had to be the exact machine that ran `apply`, see [Debugging Log #6](#6-workflow_dispatch-destroy-reported-success-but-destroyed-nothing).
 
 ### Debugging a running deployment
 
@@ -320,6 +337,71 @@ The Auto Scaling Group's three behaviors were each triggered and observed agains
 
 ---
 
+## v3: Remote State and Secrets
+
+v3 is a hardening pass, not a feature release. It closes two items from the v2 "Future Improvements" list and is verified the same way as v2: deployed on a real AWS account, checked, then destroyed.
+
+### 1. Remote state: S3 + DynamoDB lock
+
+**Why:** [Debugging Log #6](#6-workflow_dispatch-destroy-reported-success-but-destroyed-nothing) — with local state, the CI runner and my machine each had their own idea of what existed, and a `destroy` reported success while destroying nothing.
+
+**How:**
+- The state bucket has to exist *before* Terraform can store state in it, so it is created by a separate `bootstrap/` stack that keeps its own local state and is applied once: a versioned, encrypted S3 bucket with public access blocked, plus a DynamoDB table (`LockID`) used as a lock so two runs can't write the state at the same time.
+- `terraform/backend.tf` points the main stack at that bucket, and `terraform init -migrate-state` connected it.
+
+**Evidence:**
+
+The state object in S3, with versioning showing every write during the apply:
+![Terraform state in S3, 6 versions](./screenshots/31-remote-state-s3-versions.png)
+
+The DynamoDB lock table:
+![DynamoDB lock table](./screenshots/32-dynamodb-lock-table.png)
+
+`terraform state list`, read from the remote backend:
+![terraform state list from the remote backend](./screenshots/38-terraform-state-list-remote.png)
+
+### 2. Secrets: SSM Parameter Store instead of plaintext `user_data`
+
+**Before (v2):** `db_password` and `jwt_secret` were interpolated into the Launch Template's `user_data`, so anyone with read-only access to the EC2 console could see them.
+
+**After (v3):**
+- `secrets.tf` creates two `SecureString` parameters, `/teslo-two-tier/db_password` and `/teslo-two-tier/jwt_secret`.
+- A policy attached to the instance role allows `ssm:GetParameter` on those two ARNs and nothing else.
+- The `user_data` now only contains `aws ssm get-parameter ... --with-decryption` commands; the instance reads the values at boot and hands them to the container.
+- I chose Parameter Store (standard tier, no per-parameter charge) over Secrets Manager (a monthly fee per secret) since the project doesn't need rotation.
+
+**Evidence:**
+
+The two parameters, stored as `SecureString`:
+![SSM Parameter Store with two SecureString parameters](./screenshots/33-ssm-parameter-store.png)
+
+The Launch Template's `user_data` now contains commands, not values:
+![Launch Template user_data without plaintext secrets](./screenshots/34-launch-template-user-data-no-secrets.png)
+
+The policy is scoped to exactly two parameters:
+![IAM policy: ssm:GetParameter on two ARNs](./screenshots/35-iam-read-secrets-policy.png)
+
+From inside the instance (via SSM Session Manager), reading an allowed parameter works, while listing parameters is denied:
+![AccessDenied on ssm:DescribeParameters](./screenshots/36-ssm-access-denied.png)
+
+**What this does *not* fix** (and why it's still on the roadmap):
+- The values are still in the **Terraform state**. The state bucket is encrypted and private, but the state file itself is now the sensitive artifact.
+- The values are still **plaintext environment variables inside the container**. From a session on the instance, `docker inspect` shows them (values blurred below). The improvement is *who can reach them* — now it takes `ssm:GetParameter` or permission to open a session on the instance, instead of just being able to view the launch template — not that they stop existing.
+- The parameters use the default AWS-managed key (`aws/ssm`), not a customer-managed KMS key.
+
+![docker inspect shows the env vars inside the container (values blurred)](./screenshots/37-docker-inspect-env.png)
+
+### Verification
+
+The app worked end to end after the change: the instance reached `Healthy` in the target group and `/api/products` returned seeded data through CloudFront, which proves the container connected to RDS with the password it read from SSM.
+
+![/api/products through CloudFront, v3](./screenshots/39-products-endpoint-v3.png)
+
+Teardown went through the remote backend (note the state lock being released):
+![terraform destroy: 32 destroyed](./screenshots/41-destroy-complete-v3.png)
+
+---
+
 ## Debugging Log
 
 Everything below was found and fixed against the real, deployed infrastructure — not simulated. This is the part of the project I'd point to first in an interview.
@@ -376,7 +458,7 @@ Destroy complete! Resources: 0 destroyed.
 
 Except the real infrastructure — VPC, ASG, RDS, CloudFront, all 29 resources — was still live in AWS. The project has no remote backend configured (`provider.tf` uses local state), so every environment that runs Terraform has its own isolated `terraform.tfstate`. My local machine's state file knew about the 29 resources it had created; the GitHub Actions runner, checking out a fresh copy of the repo with no state file of its own, had nothing to destroy and correctly (from *its* point of view) reported zero changes. **Fixed by running `terraform destroy` from the same local machine that held the real state** — confirmed 29 resources destroyed, then independently re-verified with `aws rds describe-db-instances`, `aws ec2 describe-instances`, `aws elbv2 describe-load-balancers`, `aws cloudfront list-distributions`, and `aws autoscaling describe-auto-scaling-groups`, all returning empty.
 
-This is the practical, first-hand reason a **remote backend (S3 + DynamoDB lock)** is table stakes for using `workflow_dispatch` safely in any team setting — see [Future Improvements](#future-improvements).
+This is the practical, first-hand reason a **remote backend (S3 + DynamoDB lock)** is table stakes for using `workflow_dispatch` safely in any team setting — **resolved in v3**, see [v3: Remote State and Secrets](#v3-remote-state-and-secrets).
 
 ---
 
@@ -411,6 +493,12 @@ Destroy complete! Resources: 29 destroyed.
 ```
 Independently re-verified empty with `aws rds describe-db-instances`, `aws ec2 describe-instances`, `aws elbv2 describe-load-balancers`, `aws cloudfront list-distributions`, and `aws autoscaling describe-auto-scaling-groups` — see [Debugging Log #6](#6-workflow_dispatch-destroy-reported-success-but-destroyed-nothing) for why that independent check mattered.
 
+**v3 destroy** (32 resources: the 29 above plus 2 SSM parameters and 1 IAM policy), run through the remote backend:
+```
+Destroy complete! Resources: 32 destroyed.
+```
+Independently re-verified: `aws ec2 describe-nat-gateways`, `aws rds describe-db-instances`, and `aws elbv2 describe-load-balancers` all returned empty. The only things left in the account by design are the state bucket and lock table from `bootstrap/`, which cost next to nothing.
+
 ---
 
 ## Simplifications vs. Full Reference Architecture
@@ -433,12 +521,14 @@ This project is a simplified version of [project #11](https://github.com/NotHars
 - [x] Manually-triggered (`workflow_dispatch`) GitHub Actions job for `terraform apply` / `terraform destroy` — done, see [CI/CD](#cicd)
 - [x] v2: Auto Scaling Group across multiple instances — done, see [Auto Scaling — Verified Behaviors](#auto-scaling--verified-behaviors)
 - [x] v2: CloudFront distribution in front of the ALB — done, see [CloudFront](#cloudfront)
-- [ ] **Migrate Terraform state to a remote backend (S3 + DynamoDB lock)** — not optional if `workflow_dispatch` is going to be used safely; see [Debugging Log #6](#6-workflow_dispatch-destroy-reported-success-but-destroyed-nothing) for the real failure this caused
+- [x] v3: Migrate Terraform state to a remote backend (S3 + DynamoDB lock) — done, see [v3: Remote State and Secrets](#v3-remote-state-and-secrets)
 - [ ] HTTPS end-to-end: ACM certificate + custom domain via Route 53, HTTPS listener on the ALB, CloudFront origin over HTTPS instead of HTTP
 - [ ] AWS WAF, attached to CloudFront or the ALB
 - [ ] Migrate the app image from Docker Hub to Amazon ECR
 - [ ] Add a separate CI/CD pipeline to build and push the Teslo Shop Docker image automatically on every app commit
-- [ ] Move secrets (`DB_PASSWORD`, `JWT_SECRET`) out of EC2 `user_data` and into AWS Secrets Manager, fetched by the container at startup instead of injected as plaintext env vars
+- [x] v3: Move secrets (`DB_PASSWORD`, `JWT_SECRET`) out of EC2 `user_data` into SSM Parameter Store — done, see [v3: Remote State and Secrets](#v3-remote-state-and-secrets)
+- [ ] Stop passing secrets to the container as environment variables: have the app read them from SSM / Secrets Manager at startup, and use a customer-managed KMS key
+- [ ] Replace the `dynamodb_table` backend setting with S3-native locking (`use_lockfile`) — `dynamodb_table` is deprecated in current Terraform
 - [ ] Add a `wait-for-it` style healthcheck directly in the Dockerfile `HEALTHCHECK` instruction
 - [ ] Multi-AZ RDS
 
@@ -454,8 +544,12 @@ This project is a simplified version of [project #11](https://github.com/NotHars
 - **Local Terraform state is invisible to anything that isn't the exact machine that created it.** A `destroy` that reports success from an environment with no state for your resources isn't lying — it's technically correct and dangerously misleading at the same time. This is the concrete, first-hand argument for a remote backend, not just a best-practice bullet point read somewhere.
 - **Verify destruction independently of the tool that claims to have done it.** After the local `terraform destroy`, I cross-checked with five separate `aws describe-*` / `list-*` CLI calls across RDS, EC2, ELB, CloudFront, and Auto Scaling — not because I distrusted the "29 destroyed" message, but because trusting a single source after already being burned once by a false "success" is how the AWS bill surprises happen.
 
+- **Moving a secret doesn't make it disappear; it changes who can reach it.** After moving the password and JWT secret to SSM, `docker inspect` on the instance still showed them in plaintext. What v3 actually bought is a smaller audience (it now takes `ssm:GetParameter` or access to the instance, instead of just read access to the launch template), and I'd rather document that honestly than claim the secrets are "secured".
+- **A remote backend has a chicken-and-egg problem.** The bucket that stores the state can't be created by the stack that needs it, so it lives in its own small `bootstrap/` stack with local state, applied once and never destroyed.
+- **Least privilege is easy to prove.** From the instance, reading the two allowed parameters works while `ssm:DescribeParameters` returns `AccessDenied` — one command each, and the screenshot is the evidence.
+
 ---
 
 ## Tech Stack
 
-`Terraform` `AWS` `Auto Scaling` `CloudFront` `CloudWatch` `Docker` `NestJS` `TypeORM` `PostgreSQL` `VPC` `EC2` `RDS` `ALB` `IAM` `SSM` `GitHub Actions`
+`Terraform` `AWS` `Auto Scaling` `CloudFront` `CloudWatch` `Docker` `NestJS` `TypeORM` `PostgreSQL` `VPC` `EC2` `RDS` `ALB` `IAM` `SSM Parameter Store` `S3` `DynamoDB` `GitHub Actions`
