@@ -497,6 +497,11 @@ Destroy complete! Resources: 32 destroyed.
 ```
 Independently re-verified: `aws ec2 describe-nat-gateways`, `aws rds describe-db-instances`, and `aws elbv2 describe-load-balancers` all returned empty. The only things left in the account by design are the state bucket and lock table from `bootstrap/`, which cost next to nothing.
 
+**v3 actual cost** (the single apply → verify → destroy cycle; October 2026 month-to-date in the AWS console, where v3 was the only deployment):
+![AWS cost breakdown, October 2026](./screenshots/42-actual-cost-v3.png)
+
+About half of it is `EC2 - Other`, where the NAT Gateway is billed, followed by the ALB and RDS at a few cents each. S3, DynamoDB, and KMS (the key behind the `SecureString` parameters) all round to $0.00, so the remote state and secrets management added in v3 are effectively free. AWS can take up to 24 hours to finalize billing data, so the final figure may differ slightly.
+
 ---
 
 ## Known Limitations
