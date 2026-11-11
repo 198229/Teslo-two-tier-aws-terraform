@@ -156,6 +156,8 @@ The GitHub Actions workflow (`.github/workflows/terraform.yml`) has two jobs:
 
 ## Getting Started
 
+> **Note:** the demo infrastructure has been fully torn down, including the remote state bucket and lock table, and the CI workflow is disabled so it doesn't fail against a bucket that no longer exists. Following the steps below recreates everything, starting with the `bootstrap/` stack.
+
 Want to deploy this yourself? Here's everything you need.
 
 ### Prerequisites
@@ -495,7 +497,7 @@ Independently re-verified empty with `aws rds describe-db-instances`, `aws ec2 d
 ```
 Destroy complete! Resources: 32 destroyed.
 ```
-Independently re-verified: `aws ec2 describe-nat-gateways`, `aws rds describe-db-instances`, and `aws elbv2 describe-load-balancers` all returned empty. The only things left in the account by design are the state bucket and lock table from `bootstrap/`, which cost next to nothing.
+Independently re-verified: `aws ec2 describe-nat-gateways`, `aws rds describe-db-instances`, and `aws elbv2 describe-load-balancers` all returned empty. The state bucket and lock table from `bootstrap/` were kept while the repository was being shared, and were removed on 11 November 2026 once the demo was finished.
 
 **v3 actual cost** (the single apply → verify → destroy cycle; October 2026 month-to-date in the AWS console, where v3 was the only deployment):
 ![AWS cost breakdown, October 2026](./screenshots/42-actual-cost-v3.png)
